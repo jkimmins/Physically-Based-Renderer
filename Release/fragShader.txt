@@ -1,0 +1,123 @@
+#version 430 core
+out vec4 FragColor;
+in vec2 TexCoords;
+in vec3 eyeSpaceVertPosV;
+in vec3 vNormalV;
+in vec3 eyeSpaceLightPosV;
+
+// Uniform Variables
+
+// Colour of the object (red in this case)
+uniform vec3 albedo = {1.0f,0.0f,0.0f};
+
+// How metallic the object will appear
+uniform float metallic = 0.0f;
+
+// How rough the object will appear
+uniform float roughness = 1.0f;
+
+// Ambient occlusion
+uniform float ambientOcclusion = 0.5f;
+
+// Colour of the light (white in this case)
+uniform vec3 lightColor = {300.0f, 300.0f, 300.0f};
+const float pi = 3.1415926536;
+
+// Trowbridge-Reitz normal distribution function
+// The purpose of thos function is to check how rough
+// an object and return how much of a pin point of light
+// should be rendered.
+float TRND(vec3 n, vec3 h, float roughness)
+{
+    float a = roughness*roughness;
+    float a2 = a*a;
+    float nDotH = max(dot(n, h), 0.0);
+    float nDotH2 = nDotH*nDotH;
+
+    float nom   = a2;
+    float denom = (nDotH2 * (a2 - 1.0) + 1.0);
+    denom = pi * denom * denom;
+
+    // Prevent a return value of 0
+    return nom / max(denom, 0.0000001);
+}
+
+// The Schlick GGX function takes the roughness of an
+// object and determines how occluded the object will
+// be due to the 'roughness' getting in the way of the
+// light causing certain areas of an object to be appear
+// darker the rougher it becomes
+float SchlickGGX(float nDotV, float roughness)
+{
+    float r = (roughness + 1.0);
+    float k = (r*r) / 8.0;
+
+    float nom   = nDotV;
+    float denom = nDotV * (1.0 - k) + k;
+
+    return nom / denom;
+}
+
+// Smith's method allows us to add occlusion to an object useing
+// Schlick's GGX twice to take into account both geometry obstruction
+// from roughness and shadowing from the light direction
+float GeometrySmith(vec3 n, vec3 v, vec3 l, float roughness)
+{
+    float nDotV = max(dot(n, v), 0.0);
+    float nDotL = max(dot(n, l), 0.0);
+    float ggx2 = SchlickGGX(nDotV, roughness);
+    float ggx1 = SchlickGGX(nDotL, roughness);
+
+    return ggx1 * ggx2;
+}
+
+// The Fresnel equation describes how much light
+// should be reflected based on the viewing angle
+vec3 fresnelSchlick(float cosTheta, vec3 f0)
+{
+    return f0 + (1.0 - f0) * pow(max(1.0 - cosTheta, 0.0), 5.0);
+}
+
+void main()
+{		
+    vec3 n = normalize(vNormalV);
+    vec3 v = normalize(eyeSpaceLightPosV - eyeSpaceVertPosV);
+
+    vec3 f0 = vec3(0.04); 
+    f0 = mix(f0, albedo, metallic);
+	           
+    // Reflectance
+    vec3 lo = vec3(0.0);
+
+    // Calculate radiance
+    vec3 l = normalize(eyeSpaceLightPosV - eyeSpaceVertPosV);
+    vec3 h = normalize(v + l);
+    float distance = length(eyeSpaceLightPosV - eyeSpaceVertPosV);
+    float attenuation = 1.0 / (distance * distance);
+    vec3 radiance = lightColor * attenuation;        
+        
+    // Cook-Torrance reflective equation uses the
+    // previously created functions
+    float ndf = TRND(n, h, roughness);        
+    float g = GeometrySmith(n, v, l, roughness);      
+    vec3 f = fresnelSchlick(max(dot(h, v), 0.0), f0);       
+        
+    vec3 ks = f;
+    vec3 kd = vec3(1.0) - ks;
+    kd *= 1.0 - metallic;	  
+        
+    vec3 numerator = ndf * g * f;
+    float denominator = 4.0 * max(dot(n, v), 0.0) * max(dot(n, l), 0.0);
+    vec3 specular = numerator / max(denominator, 0.001);  
+            
+    float nDotL = max(dot(n, l), 0.0);                
+    lo += (kd * albedo / pi + specular) * radiance * nDotL; 
+  
+    vec3 ambient = vec3(0.03) * albedo * ambientOcclusion;
+    vec3 color = ambient + lo;
+	
+    color = color / (color + vec3(1.0));
+    color = pow(color, vec3(1.0/2.2));  
+   
+    FragColor = vec4(color, 1.0);
+}  
